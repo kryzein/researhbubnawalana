@@ -162,13 +162,14 @@ export default function ProjectEditor() {
     ? (selectedFile?.document_content ?? "")
     : (project?.document_content ?? "");
 
-  if (fileId !== prevFileIdRef.current) {
+  useEffect(() => {
+    if (fileId === prevFileIdRef.current) return;
     prevFileIdRef.current = fileId;
     setExtractedContent(undefined);
     setHasUnsavedChanges(false);
     liveHtmlRef.current = "";
     savedContentRef.current = currentSavedContent;
-  }
+  }, [fileId, currentSavedContent]);
 
   useEffect(() => {
     savedContentRef.current = currentSavedContent;
