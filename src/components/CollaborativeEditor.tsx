@@ -115,16 +115,20 @@ export function CollaborativeEditor({ initialContent, savedContent, projectId, d
     setProvider(yProvider);
     setSynced(false);
 
-    const handleSync = (isSynced: boolean) => {
-      if (isSynced) setSynced(true);
-    };
-    yProvider.on("sync", handleSync);
-    if ((yProvider as unknown as { synced?: boolean }).synced) setSynced(true);
+    const markSynced = () => setSynced(true);
+
+    yProvider.on("sync", (isSynced: boolean) => {
+      if (isSynced) markSynced();
+    });
+
+    // Fallback: if sync event never fires (e.g. already synced before listener attached),
+    // proceed after a short grace period so the editor doesn't get stuck.
+    const timeout = setTimeout(markSynced, 1500);
 
     return () => {
-      yProvider.off("sync", handleSync);
-      yDoc.destroy();
+      clearTimeout(timeout);
       yProvider.destroy();
+      yDoc.destroy();
     };
   }, [room]);
 
@@ -190,8 +194,7 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
 
   const editorExtensions = useMemo(
     () => {
-      if (!userReady) return null;
-      return [
+      const exts = [
         StarterKit.configure({
           undoRedo: false,
         }),
@@ -227,11 +230,11 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
           document: doc,
           field: "default",
         }),
-        CollaborationCaret.configure({
-          provider,
-          user: { name: userName, color: userColor },
-        }),
+        ...(userReady
+          ? [CollaborationCaret.configure({ provider, user: { name: userName, color: userColor } })]
+          : []),
       ];
+      return exts;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [doc, provider, userReady],
@@ -241,7 +244,7 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
     {
       immediatelyRender: false,
       shouldRerenderOnTransaction: false,
-      extensions: editorExtensions ?? [],
+      extensions: editorExtensions,
       editorProps: {
         attributes: {
           class:
@@ -319,7 +322,7 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
     });
   }, [editor, onEditorReady]);
 
-  if (!userReady || !editor) {
+  if (!editor) {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground">
         Loading editor...
