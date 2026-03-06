@@ -121,7 +121,10 @@ export function CollaborativeEditor({ initialContent, savedContent, projectId, d
     yProvider.on("sync", handleSync);
     if ((yProvider as unknown as { synced?: boolean }).synced) setSynced(true);
 
+    const fallback = setTimeout(() => setSynced(true), 2000);
+
     return () => {
+      clearTimeout(fallback);
       yProvider.off("sync", handleSync);
       yDoc.destroy();
       yProvider.destroy();
