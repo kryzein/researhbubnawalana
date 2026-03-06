@@ -128,7 +128,7 @@ export function CollaborativeEditor({ initialContent, savedContent, projectId, d
     };
   }, [room]);
 
-  const ready = !!doc && !!provider && savedContent !== undefined;
+  const ready = !!doc && !!provider && savedContent !== undefined && synced;
 
   if (!ready) {
     return (
@@ -183,59 +183,65 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
     printDocument(editor.getHTML(), documentTitle || "Document", pageSize, pageMargins);
   };
 
-  const userName = (currentUser?.info?.name as string) || "Anonymous";
-  const userColor = (currentUser?.info?.color as string) || "#999";
+  const userName = (currentUser?.info?.name as string) || "";
+  const userColor = (currentUser?.info?.color as string) || "";
+
+  const userReady = !!userName && !!userColor;
 
   const editorExtensions = useMemo(
-    () => [
-      StarterKit.configure({
-        undoRedo: false,
-      }),
-      Highlight,
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableCell,
-      TableHeader,
-      TextAlign.configure({
-        types: ["heading", "paragraph"],
-      }),
-      ImageExt.configure({
-        HTMLAttributes: {
-          class: "cursor-pointer max-w-full h-auto rounded-md",
-        },
-      }),
-      Underline,
-      TextStyle,
-      Color,
-      FontSize.configure({
-        defaultSize: "16px",
-        step: 2,
-      }),
-      FontFamily,
-      Indent,
-      LineHeight,
-      Placeholder.configure({
-        placeholder: "Start writing or paste content from your uploaded files...",
-      }),
-      Collaboration.configure({
-        document: doc,
-        field: "default",
-      }),
-      CollaborationCaret.configure({
-        provider,
-        user: { name: "Anonymous", color: "#999" },
-      }),
-    ],
-    [doc, provider],
+    () => {
+      if (!userReady) return null;
+      return [
+        StarterKit.configure({
+          undoRedo: false,
+        }),
+        Highlight,
+        TaskList,
+        TaskItem.configure({ nested: true }),
+        Table.configure({ resizable: true }),
+        TableRow,
+        TableCell,
+        TableHeader,
+        TextAlign.configure({
+          types: ["heading", "paragraph"],
+        }),
+        ImageExt.configure({
+          HTMLAttributes: {
+            class: "cursor-pointer max-w-full h-auto rounded-md",
+          },
+        }),
+        Underline,
+        TextStyle,
+        Color,
+        FontSize.configure({
+          defaultSize: "16px",
+          step: 2,
+        }),
+        FontFamily,
+        Indent,
+        LineHeight,
+        Placeholder.configure({
+          placeholder: "Start writing or paste content from your uploaded files...",
+        }),
+        Collaboration.configure({
+          document: doc,
+          field: "default",
+        }),
+        CollaborationCaret.configure({
+          provider,
+          user: { name: userName, color: userColor },
+        }),
+      ];
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [doc, provider, userReady],
   );
 
   const editor = useEditor(
     {
       immediatelyRender: false,
       shouldRerenderOnTransaction: false,
-      extensions: editorExtensions,
+      extensions: editorExtensions ?? [],
       editorProps: {
         attributes: {
           class:
@@ -251,11 +257,11 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
         },
       },
     },
-    [doc, provider],
+    [doc, provider, userReady],
   );
 
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || !userName || !userColor) return;
     editor.commands.updateUser({
       name: userName,
       color: userColor,
@@ -268,9 +274,13 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
     if (!editor) return;
     if (contentLoadedRef.current) return;
     contentLoadedRef.current = true;
-    const content = initialContent || savedContent;
-    if (content) {
-      editor.commands.setContent(content, false);
+    const yText = doc.getText("default");
+    const yjsIsEmpty = yText.length === 0;
+    if (yjsIsEmpty) {
+      const content = initialContent || savedContent;
+      if (content) {
+        editor.commands.setContent(content, false);
+      }
     }
   }, [editor]);
 
@@ -309,7 +319,13 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
     });
   }, [editor, onEditorReady]);
 
-  if (!editor) return null;
+  if (!userReady || !editor) {
+    return (
+      <div className="flex items-center justify-center h-64 text-muted-foreground">
+        Loading editor...
+      </div>
+    );
+  }
 
   return (
     <div className="border border-border rounded-lg overflow-hidden bg-card shadow-sm">
