@@ -115,16 +115,20 @@ export function CollaborativeEditor({ initialContent, savedContent, projectId, d
     setProvider(yProvider);
     setSynced(false);
 
-    const handleSync = (isSynced: boolean) => {
-      if (isSynced) setSynced(true);
-    };
-    yProvider.on("sync", handleSync);
-    if ((yProvider as unknown as { synced?: boolean }).synced) setSynced(true);
+    const markSynced = () => setSynced(true);
+
+    yProvider.on("sync", (isSynced: boolean) => {
+      if (isSynced) markSynced();
+    });
+
+    // Fallback: if sync event never fires (e.g. already synced before listener attached),
+    // proceed after a short grace period so the editor doesn't get stuck.
+    const timeout = setTimeout(markSynced, 1500);
 
     return () => {
-      yProvider.off("sync", handleSync);
-      yDoc.destroy();
+      clearTimeout(timeout);
       yProvider.destroy();
+      yDoc.destroy();
     };
   }, [room]);
 
