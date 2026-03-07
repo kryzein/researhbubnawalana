@@ -102,36 +102,53 @@ function PagedEditorCanvas({ pageSize, pageMargins, children, readOnly, html }: 
 
 export { PagedEditorCanvas };
 
-export function CollaborativeEditor({ initialContent, savedContent, projectId, documentTitle, onContentChange, onSave, isSaving, hasUnsavedChanges, onEditorReady, pageSize, pageMargins, onPageSizeChange, onMarginsChange }: CollaborativeEditorProps) {
+export function CollaborativeEditor(props: CollaborativeEditorProps) {
   const room = useRoom();
   const [doc, setDoc] = useState<Y.Doc | null>(null);
   const [provider, setProvider] = useState<LiveblocksYjsProvider | null>(null);
   const [synced, setSynced] = useState(false);
+  const [liveblocksError, setLiveblocksError] = useState(false);
 
   useEffect(() => {
     const yDoc = new Y.Doc();
-    const yProvider = new LiveblocksYjsProvider(room, yDoc);
-    setDoc(yDoc);
-    setProvider(yProvider);
-    setSynced(false);
+    let yProvider: LiveblocksYjsProvider;
+    let destroyed = false;
 
-    const handleSync = (isSynced: boolean) => {
-      if (isSynced) setSynced(true);
-    };
-    yProvider.on("sync", handleSync);
-    if ((yProvider as unknown as { synced?: boolean }).synced) setSynced(true);
+    try {
+      yProvider = new LiveblocksYjsProvider(room, yDoc);
+      setDoc(yDoc);
+      setProvider(yProvider);
+      setSynced(false);
+      setLiveblocksError(false);
 
-    const fallback = setTimeout(() => setSynced(true), 2000);
+      const handleSync = (isSynced: boolean) => {
+        if (isSynced) setSynced(true);
+      };
+      yProvider.on("sync", handleSync);
+      if ((yProvider as unknown as { synced?: boolean }).synced) setSynced(true);
 
-    return () => {
-      clearTimeout(fallback);
-      yProvider.off("sync", handleSync);
+      const fallback = setTimeout(() => {
+        if (!destroyed) setSynced(true);
+      }, 2500);
+
+      return () => {
+        destroyed = true;
+        clearTimeout(fallback);
+        yProvider.off("sync", handleSync);
+        yDoc.destroy();
+        yProvider.destroy();
+      };
+    } catch {
+      setLiveblocksError(true);
       yDoc.destroy();
-      yProvider.destroy();
-    };
+    }
   }, [room]);
 
-  const ready = !!doc && !!provider && savedContent !== undefined && synced;
+  if (liveblocksError) {
+    return <StandaloneEditor {...props} />;
+  }
+
+  const ready = !!doc && !!provider && props.savedContent !== undefined && synced;
 
   if (!ready) {
     return (
@@ -141,25 +158,13 @@ export function CollaborativeEditor({ initialContent, savedContent, projectId, d
     );
   }
 
-  return <TiptapEditor doc={doc!} provider={provider!} initialContent={initialContent} savedContent={savedContent} projectId={projectId} documentTitle={documentTitle} onContentChange={onContentChange} onSave={onSave} isSaving={isSaving} hasUnsavedChanges={hasUnsavedChanges} onEditorReady={onEditorReady} pageSize={pageSize} pageMargins={pageMargins} onPageSizeChange={onPageSizeChange} onMarginsChange={onMarginsChange} />;
+  return <TiptapEditor doc={doc!} provider={provider!} {...props} savedContent={props.savedContent ?? ""} />;
 }
 
-interface TiptapEditorProps {
+interface TiptapEditorProps extends CollaborativeEditorProps {
   doc: Y.Doc;
   provider: LiveblocksYjsProvider;
-  initialContent?: string;
   savedContent: string;
-  projectId?: string;
-  documentTitle?: string;
-  onContentChange?: (html: string) => void;
-  onSave?: () => void;
-  isSaving?: boolean;
-  hasUnsavedChanges?: boolean;
-  onEditorReady?: (setContent: (html: string) => void) => void;
-  pageSize?: PageSize;
-  pageMargins?: PageMargins;
-  onPageSizeChange?: (size: PageSize) => void;
-  onMarginsChange?: (margins: PageMargins) => void;
 }
 
 function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, documentTitle, onContentChange, onSave, isSaving, hasUnsavedChanges, onEditorReady, pageSize: pageSizeProp, pageMargins: pageMarginsProp, onPageSizeChange, onMarginsChange }: TiptapEditorProps) {
@@ -167,6 +172,7 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [internalPageMargins, setInternalPageMargins] = useState<PageMargins>(DEFAULT_MARGINS);
   const [internalPageSize, setInternalPageSize] = useState<PageSize>("letter");
+  const [liveblocksReady, setLiveblocksReady] = useState(false);
 
   const pageSize = pageSizeProp ?? internalPageSize;
   const pageMargins = pageMarginsProp ?? internalPageMargins;
@@ -189,11 +195,21 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
   const userName = (currentUser?.info?.name as string) || "";
   const userColor = (currentUser?.info?.color as string) || "";
 
-  const userReady = !!userName && !!userColor;
+  useEffect(() => {
+    if (userName && userColor) {
+      setLiveblocksReady(true);
+      return;
+    }
+    const timeout = setTimeout(() => setLiveblocksReady(true), 3000);
+    return () => clearTimeout(timeout);
+  }, [userName, userColor]);
+
+  const resolvedName = userName || "Anonymous";
+  const resolvedColor = userColor || "#64B5F6";
 
   const editorExtensions = useMemo(
     () => {
-      if (!userReady) return null;
+      if (!liveblocksReady) return null;
       return [
         StarterKit.configure({
           undoRedo: false,
@@ -232,12 +248,12 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
         }),
         CollaborationCaret.configure({
           provider,
-          user: { name: userName, color: userColor },
+          user: { name: resolvedName, color: resolvedColor },
         }),
       ];
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [doc, provider, userReady],
+    [doc, provider, liveblocksReady],
   );
 
   const editor = useEditor(
@@ -260,16 +276,16 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
         },
       },
     },
-    [doc, provider, userReady],
+    [doc, provider, liveblocksReady],
   );
 
   useEffect(() => {
-    if (!editor || !userName || !userColor) return;
+    if (!editor || !resolvedName || !resolvedColor) return;
     editor.commands.updateUser({
-      name: userName,
-      color: userColor,
+      name: resolvedName,
+      color: resolvedColor,
     });
-  }, [editor, userName, userColor]);
+  }, [editor, resolvedName, resolvedColor]);
 
   const contentLoadedRef = useRef(false);
 
@@ -322,7 +338,7 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
     });
   }, [editor, onEditorReady]);
 
-  if (!userReady || !editor) {
+  if (!liveblocksReady || !editor) {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground">
         Loading editor...
@@ -342,6 +358,134 @@ function TiptapEditor({ doc, provider, initialContent, savedContent, projectId, 
       <div className="sm:hidden border-b border-border bg-muted/30 px-3 py-2 flex items-center justify-between">
         <span className="text-xs text-muted-foreground font-medium">Select text for formatting</span>
         <ActiveUsers />
+      </div>
+
+      <BubbleToolbar editor={editor} />
+
+      <PagedEditorCanvas pageSize={pageSize} pageMargins={pageMargins}>
+        <EditorContent editor={editor} />
+      </PagedEditorCanvas>
+
+      <ImagePreviewModal
+        src={previewImage}
+        alt="Editor image"
+        onClose={() => setPreviewImage(null)}
+      />
+    </div>
+  );
+}
+
+export function StandaloneEditor({ initialContent, savedContent, projectId, documentTitle, onContentChange, onSave, isSaving, hasUnsavedChanges, onEditorReady, pageSize: pageSizeProp, pageMargins: pageMarginsProp, onPageSizeChange, onMarginsChange }: CollaborativeEditorProps) {
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [internalPageMargins, setInternalPageMargins] = useState<PageMargins>(DEFAULT_MARGINS);
+  const [internalPageSize, setInternalPageSize] = useState<PageSize>("letter");
+
+  const pageSize = pageSizeProp ?? internalPageSize;
+  const pageMargins = pageMarginsProp ?? internalPageMargins;
+
+  const handlePageSizeChange = (size: PageSize) => {
+    if (onPageSizeChange) onPageSizeChange(size);
+    else setInternalPageSize(size);
+  };
+
+  const handleMarginsChange = (margins: PageMargins) => {
+    if (onMarginsChange) onMarginsChange(margins);
+    else setInternalPageMargins(margins);
+  };
+
+  const handlePrint = () => {
+    if (!editor) return;
+    printDocument(editor.getHTML(), documentTitle || "Document", pageSize, pageMargins);
+  };
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    shouldRerenderOnTransaction: false,
+    extensions: [
+      StarterKit,
+      Highlight,
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      Table.configure({ resizable: true }),
+      TableRow,
+      TableCell,
+      TableHeader,
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
+      ImageExt.configure({
+        HTMLAttributes: { class: "cursor-pointer max-w-full h-auto rounded-md" },
+      }),
+      Underline,
+      TextStyle,
+      Color,
+      FontSize.configure({ defaultSize: "16px", step: 2 }),
+      FontFamily,
+      Indent,
+      LineHeight,
+      Placeholder.configure({
+        placeholder: "Start writing or paste content from your uploaded files...",
+      }),
+    ],
+    content: initialContent || savedContent || "",
+    editorProps: {
+      attributes: {
+        class: "prose prose-sm sm:prose max-w-none focus:outline-none min-h-[600px] text-foreground",
+      },
+      handleClick: (view, pos, event) => {
+        const target = event.target as HTMLElement;
+        if (target.tagName === "IMG") {
+          setPreviewImage((target as HTMLImageElement).src);
+          return true;
+        }
+        return false;
+      },
+    },
+  });
+
+  useEffect(() => {
+    if (!editor || !initialContent) return;
+    editor.commands.setContent(initialContent, false);
+  }, [editor, initialContent]);
+
+  useEffect(() => {
+    if (!editor || !onContentChange) return;
+    const handler = () => onContentChange(editor.getHTML());
+    editor.on("update", handler);
+    return () => editor.off("update", handler);
+  }, [editor, onContentChange]);
+
+  useEffect(() => {
+    if (!onSave) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        onSave();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onSave]);
+
+  useEffect(() => {
+    if (!editor || !onEditorReady) return;
+    onEditorReady((html: string) => editor.commands.setContent(html));
+  }, [editor, onEditorReady]);
+
+  if (!editor) {
+    return (
+      <div className="flex items-center justify-center h-64 text-muted-foreground">
+        Loading editor...
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-border rounded-lg overflow-hidden bg-card shadow-sm">
+      <div className="hidden sm:block border-b border-border bg-muted/30">
+        <EditorToolbar editor={editor} projectId={projectId} onMarginsChange={handleMarginsChange} currentMargins={pageMargins} onSave={onSave} isSaving={isSaving} hasUnsavedChanges={hasUnsavedChanges} onPageSizeChange={handlePageSizeChange} currentPageSize={pageSize} onPrint={handlePrint} />
+      </div>
+
+      <div className="sm:hidden border-b border-border bg-muted/30 px-3 py-2">
+        <span className="text-xs text-muted-foreground font-medium">Select text for formatting</span>
       </div>
 
       <BubbleToolbar editor={editor} />

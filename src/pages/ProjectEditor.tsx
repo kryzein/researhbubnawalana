@@ -2,7 +2,7 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { RoomProvider } from "@liveblocks/react";
-import { CollaborativeEditor, PagedEditorCanvas } from "@/components/CollaborativeEditor";
+import { CollaborativeEditor, StandaloneEditor, PagedEditorCanvas } from "@/components/CollaborativeEditor";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Loader as Loader2, Share2, Copy, Check, FileText, Eye, Pencil, Download, Printer, UserPlus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -30,6 +30,7 @@ import { printDocument } from "@/lib/print-document";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { liveblocksAuthEndpoint } from "@/lib/liveblocks";
 
 export default function ProjectEditor() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -53,9 +54,16 @@ export default function ProjectEditor() {
   const [pageMargins, setPageMargins] = useState<PageMargins>(DEFAULT_MARGINS);
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [liveblocksAvailable, setLiveblocksAvailable] = useState<boolean | null>(null);
   const liveHtmlRef = useRef<string>("");
   const isSavingRef = useRef(false);
   const savedContentRef = useRef<string>("");
+
+  useEffect(() => {
+    liveblocksAuthEndpoint()
+      .then(() => setLiveblocksAvailable(true))
+      .catch(() => setLiveblocksAvailable(false));
+  }, []);
 
   const { data: projectFiles, isLoading: filesLoading } = useQuery({
     queryKey: ["project-files", projectId],
@@ -592,40 +600,68 @@ export default function ProjectEditor() {
       )}
 
       <div className={viewMode === "view" && selectedFile ? "hidden" : ""}>
-        <RoomProvider
-          key={fileId || "blank"}
-          id={roomId}
-          initialPresence={{}}
-        >
-          <ClientSideSuspense
-            fallback={
-              <div className="flex items-center justify-center h-64 text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                Connecting to collaboration session...
-              </div>
-            }
+        {liveblocksAvailable === null ? (
+          <div className="flex items-center justify-center h-64 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            Loading editor...
+          </div>
+        ) : liveblocksAvailable ? (
+          <RoomProvider
+            key={fileId || "blank"}
+            id={roomId}
+            initialPresence={{}}
           >
-            <CollaborativeEditor
-              initialContent={extractedContent}
-              savedContent={
-                fileId
-                  ? (fileSavedContent ?? "")
-                  : (project?.document_content ?? "")
+            <ClientSideSuspense
+              fallback={
+                <div className="flex items-center justify-center h-64 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                  Connecting to collaboration session...
+                </div>
               }
-              projectId={projectId}
-              documentTitle={selectedFile ? selectedFile.file_name : project?.name}
-              onContentChange={handleContentChange}
-              onSave={handleSave}
-              isSaving={isSaving}
-              hasUnsavedChanges={hasUnsavedChanges}
-              onEditorReady={(fn) => { setEditorContentRef.current = fn; }}
-              pageSize={pageSize}
-              pageMargins={pageMargins}
-              onPageSizeChange={setPageSize}
-              onMarginsChange={setPageMargins}
-            />
-          </ClientSideSuspense>
-        </RoomProvider>
+            >
+              <CollaborativeEditor
+                initialContent={extractedContent}
+                savedContent={
+                  fileId
+                    ? (fileSavedContent ?? "")
+                    : (project?.document_content ?? "")
+                }
+                projectId={projectId}
+                documentTitle={selectedFile ? selectedFile.file_name : project?.name}
+                onContentChange={handleContentChange}
+                onSave={handleSave}
+                isSaving={isSaving}
+                hasUnsavedChanges={hasUnsavedChanges}
+                onEditorReady={(fn) => { setEditorContentRef.current = fn; }}
+                pageSize={pageSize}
+                pageMargins={pageMargins}
+                onPageSizeChange={setPageSize}
+                onMarginsChange={setPageMargins}
+              />
+            </ClientSideSuspense>
+          </RoomProvider>
+        ) : (
+          <StandaloneEditor
+            key={fileId || "blank"}
+            initialContent={extractedContent}
+            savedContent={
+              fileId
+                ? (fileSavedContent ?? "")
+                : (project?.document_content ?? "")
+            }
+            projectId={projectId}
+            documentTitle={selectedFile ? selectedFile.file_name : project?.name}
+            onContentChange={handleContentChange}
+            onSave={handleSave}
+            isSaving={isSaving}
+            hasUnsavedChanges={hasUnsavedChanges}
+            onEditorReady={(fn) => { setEditorContentRef.current = fn; }}
+            pageSize={pageSize}
+            pageMargins={pageMargins}
+            onPageSizeChange={setPageSize}
+            onMarginsChange={setPageMargins}
+          />
+        )}
       </div>
 
       {showUnsavedDialog && (
